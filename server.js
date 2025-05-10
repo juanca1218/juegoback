@@ -1,9 +1,8 @@
-// server.js
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import { router as quizRoutes } from './routes/QuizRoutes.js';
+import { router as chatRoutes } from './routes/chatRoutes.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -31,15 +30,10 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const app = express();
-const PORT = process.env.PORT || 5001; // Changed port to 5001
+const PORT = process.env.PORT || 5000;
 
-// Middleware de CORS configurado específicamente
-app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:5173'], // Permitir tanto el puerto de desarrollo como el de Vite
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-
+// Middleware
+app.use(cors());
 app.use(express.json());
 
 // MongoDB Connection
@@ -50,22 +44,13 @@ mongoose.connect(MONGODB_URI)
   .catch(err => console.error('❌ Error de conexión a MongoDB:', err));
 
 // Rutas
-app.use('/api/quiz', quizRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Ruta para probar el servidor
 app.get('/', (req, res) => {
   res.json({ 
     message: 'API de ChatGPT funcionando correctamente',
     status: 'OpenAI configurado con clave fija en el controlador'
-  });
-});
-
-// Manejador de errores global
-app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(500).json({
-    error: 'Error interno del servidor',
-    details: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
 });
 
