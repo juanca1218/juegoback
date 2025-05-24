@@ -33,33 +33,108 @@ export const generateChatResponse = async (req, res) => {
         error: 'No se ha configurado correctamente la API de OpenAI',
         message: 'Error interno del servidor al configurar OpenAI'
       });
+    }    // Llamada a la API de OpenAI con modelo gpt-3.5-turbo para respuestas más avanzadas    // Validar que la pregunta esté relacionada con salud mental o bienestar estudiantil
+    const mentalHealthKeywords = [
+      'ansiedad', 'depresión', 'estrés', 'angustia', 'preocupación',
+      'nervios', 'presión académica', 'estudios', 'exámenes', 'universidad',
+      'carrera', 'clases', 'tareas', 'trabajos', 'calificaciones',
+      'insomnio', 'cansancio', 'agotamiento', 'burnout', 'motivación'
+    ];
+
+    const hasRelevantKeywords = mentalHealthKeywords.some(keyword => 
+      prompt.toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    if (!hasRelevantKeywords) {
+      return res.status(400).json({ 
+        error: 'Lo siento, solo puedo ayudarte con temas relacionados con bienestar emocional, ansiedad, depresión y estrés académico.' 
+      });
     }
 
-    // Llamada a la API de OpenAI con modelo gpt-4o para respuestas más avanzadas
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-3.5-turbo",
       messages: [
         { 
           role: "system", 
-          content: "Eres un asistente amigable y útil. Tus respuestas deben ser concisas (máximo 100 palabras), claras e incluir emojis relevantes. Usa párrafos cortos para mejor legibilidad." 
+          content: `Soy la Dra. Ana Martínez, psicóloga especializada en salud mental estudiantil con 15 años de experiencia. 
+          Mi enfoque es brindar apoyo empático y profesional a estudiantes que enfrentan desafíos de salud mental, 
+          especialmente relacionados con ansiedad, depresión y estrés académico.
+
+          Directrices para mis respuestas:
+          1. Mantener un tono cálido, empático y profesional
+          2. Ofrecer sugerencias prácticas y realistas
+          3. Enfatizar la importancia de buscar ayuda profesional cuando sea necesario
+          4. Incluir técnicas de manejo del estrés y la ansiedad cuando sea apropiado
+          5. Recordar que soy un complemento, no un reemplazo de la atención profesional
+          6. Proporcionar recursos adicionales cuando sea relevante
+
+          IMPORTANTE: Si detecto signos de crisis o riesgo, siempre recomendaré buscar ayuda profesional inmediata.` 
         },
         { role: "user", content: prompt }
       ],
-      max_tokens: 300, // Limitar tokens para respuestas más cortas
-      temperature: 0.7, // Mantener algo de creatividad
-    });
+      max_tokens: 500, // Aumentado para respuestas más completas
+      temperature: 0.7,
+    });    const response = completion.choices[0].message.content;
 
-    const response = completion.choices[0].message.content;
+    // Categorizar la conversación
+    const categories = {
+      ansiedad: ['ansiedad', 'nervios', 'angustia', 'pánico', 'preocupación'],
+      depresion: ['depresión', 'tristeza', 'soledad', 'desmotivación', 'apatía'],
+      estres_academico: ['estrés', 'exámenes', 'universidad', 'tareas', 'presión']
+    };
+
+    let category = 'otro';
+    const foundKeywords = [];
+    let severity = 'no_especificado';
+    let recommendedProfessionalHelp = false;
+
+    // Detectar categoría y palabras clave
+    for (const [cat, keywords] of Object.entries(categories)) {
+      if (keywords.some(keyword => prompt.toLowerCase().includes(keyword.toLowerCase()))) {
+        category = cat;
+        foundKeywords.push(...keywords.filter(keyword => 
+          prompt.toLowerCase().includes(keyword.toLowerCase())
+        ));
+      }
+    }
+
+    // Detectar severidad basada en palabras clave
+    const severityKeywords = {
+      grave: ['muy', 'mucho', 'grave', 'severo', 'intenso', 'siempre', 'suicid', 'crisis'],
+      moderado: ['bastante', 'moderado', 'regular', 'frecuente', 'a menudo'],
+      leve: ['poco', 'leve', 'ligero', 'ocasional', 'a veces']
+    };
+
+    for (const [sev, keywords] of Object.entries(severityKeywords)) {
+      if (keywords.some(keyword => prompt.toLowerCase().includes(keyword.toLowerCase()))) {
+        severity = sev;
+        break;
+      }
+    }
+
+    // Determinar si se debe recomendar ayuda profesional
+    recommendedProfessionalHelp = severity === 'grave' || 
+      response.toLowerCase().includes('profesional') ||
+      response.toLowerCase().includes('especialista');
 
     // Guardar la conversación en la base de datos
     const conversation = new Conversation({
       prompt,
       response,
+      category,
+      keywords: foundKeywords,
+      severity,
+      recommendedProfessionalHelp
     });
 
     await conversation.save();
 
-    res.json({ response });
+    res.json({ 
+      response,
+      recommendedProfessionalHelp,
+      helpMessage: recommendedProfessionalHelp ? 
+        "Te recomiendo buscar ayuda profesional para manejar mejor esta situación. Un especialista podrá brindarte el apoyo adecuado." : null
+    });
   } catch (error) {
     console.error('Error al generar la respuesta:', error);
     res.status(500).json({ 
@@ -72,8 +147,44 @@ export const generateChatResponse = async (req, res) => {
 // Obtener historial de conversaciones
 export const getConversationHistory = async (req, res) => {
   try {
-    const conversations = await Conversation.find().sort({ createdAt: -1 }).limit(10);
-    res.json(conversations);
+    const { category, severity, needsHelp } = req.query;
+    const query = {};
+
+    // Aplicar filtros si se proporcionan
+    if (category) {
+      query.category = category;
+    }
+    if (severity) {
+      query.severity = severity;
+    }
+    if (needsHelp === 'true') {
+      query.recommendedProfessionalHelp = true;
+    }
+
+    const conversations = await Conversation.find(query)
+      .sort({ createdAt: -1 })
+      .limit(20);
+
+    // Agrupar conversaciones por categoría
+    const groupedConversations = conversations.reduce((acc, conv) => {
+      if (!acc[conv.category]) {
+        acc[conv.category] = [];
+      }
+      acc[conv.category].push(conv);
+      return acc;
+    }, {});
+
+    res.json({
+      conversations: groupedConversations,
+      stats: {
+        total: conversations.length,
+        byCategory: Object.keys(groupedConversations).reduce((acc, cat) => {
+          acc[cat] = groupedConversations[cat].length;
+          return acc;
+        }, {}),
+        needingProfessionalHelp: conversations.filter(c => c.recommendedProfessionalHelp).length
+      }
+    });
   } catch (error) {
     console.error('Error al obtener el historial:', error);
     res.status(500).json({ error: 'Error al obtener el historial de conversaciones' });
